@@ -1,0 +1,163 @@
+---
+title: "Статистический анализ данных (задание 1)"
+author: "Дарья Фокина, группа 377"
+output: html_document
+---
+В задании необходимо сравнить поведение критерия Стьюдента в версиях для равных и неравных дисперсий для проверки равенства матожиданий двух выборок из нормальных распределений, построить графики поведения достигаемых уровней значимости и мощности, а также оценки вероятности ошибки первого рода. 
+
+Заданные параметры:
+$$X_1^{n_1} \sim \mathcal{N}(0,1), X_2^{n_2} \sim \mathcal{N}(\mu,\sigma^2)\\
+H_0: \mathbb{E}X_1 = \mathbb{E} X_2\\
+H_1: \overline{H_0}\\
+n_1=30, n_2=50, \mu = 0:0.1:2, \sigma = 0.5:0.1:2\\$$
+
+```{r}
+n1 <- 30
+n2 <- 50
+mu <- seq(0,2,0.1)
+sigma <-  seq(0.5,2,0.1)
+N <- length(mu)
+M <- length(sigma)
+grid <- expand.grid(x=mu,y=sigma)
+```
+
+Получим достигаемые уровни значимости для одного эксперимента:
+
+```{r}
+N_exps  <- 1
+PV_SE    <- rep(0, N * M)
+PV_SNE   <- rep(0, N * M)
+Pow_SE   <- rep(0, N * M)
+Pow_SNE  <- rep(0, N * M)
+
+for (iter in 1:N_exps) {
+    X1 <- rnorm(n1, mean = 0, sd = 1)
+    X2n <- matrix(rnorm(n2 * length(grid$x), grid$x, grid$y), nrow=length(grid$x))
+    splitList <- split(X2n, 1:nrow(X2n))
+    
+    TMP   <- unlist(lapply(splitList, function(Y) t.test(X1, Y,var.equal = TRUE)$p.value))
+    PV_SE  <- PV_SE + TMP
+    
+    TMP    <- unlist(lapply(splitList, function(Y) t.test(X1, Y,var.equal = FALSE)$p.value))
+    PV_SNE  <- PV_SNE + TMP
+}
+PV_SE   <- matrix(PV_SE   / N_exps, nrow=N, ncol=M)
+PV_SNE  <- matrix(PV_SNE  / N_exps, nrow=N, ncol=M)
+```
+
+Полученные значения для разных значений $\mu$ и $\sigma$:
+
+```{r}
+
+library(fields)
+
+par(mfrow=c(1,2))
+par(mar=c(5,5,3,4.5))
+image.plot(matrix(grid$x, nrow=N, ncol=M), matrix(grid$y, nrow=N, ncol=M), PV_SE, 
+           col = colorRampPalette(c("blue", "cyan", "yellow", "red"))(1024), 
+           main="P: var.equal = T ", xlab=expression(mu), ylab=expression(sigma),cex=0.5)
+image.plot(matrix(grid$x, nrow=N, ncol=M), matrix(grid$y, nrow=N, ncol=M), PV_SNE, 
+           col = colorRampPalette(c("blue", "cyan", "yellow", "red"))(1024), 
+           main="P: var.equal = F", xlab=expression(mu), ylab=expression(sigma),cex=0.5)
+```
+
+Для точной оценки границы области, где нулевая гипотеза отклоняется, найдем средние p-value и оценки мощности в случае 5000 экспериментов:
+
+```{r}
+N_exps <- 5000
+PV_SE   <- rep(0, N * M)
+PV_SNE  <- rep(0, N * M)
+Pow_SE  <- rep(0, N * M)
+Pow_SNE <- rep(0, N * M)
+
+for (iter in 1:N_exps) {
+    X1  <- rnorm(n1, mean = 0, sd = 1)
+    X2n <- matrix(rnorm(n2 * length(grid$x), grid$x, grid$y), nrow=length(grid$x))
+    splitList <- split(X2n, 1:nrow(X2n))
+    
+    TMP   <- unlist(lapply(splitList, function(Y) t.test(X1, Y,var.equal = TRUE)$p.value))
+    PV_SE  <- PV_SE + TMP
+    Pow_SE <- Pow_SE + (TMP <= 0.05)
+    
+    TMP    <- unlist(lapply(splitList, function(Y) t.test(X1, Y,var.equal = FALSE)$p.value))
+    PV_SNE  <- PV_SNE + TMP
+    Pow_SNE <- Pow_SNE + (TMP <= 0.05)
+}
+PV_SE   <- matrix(PV_SE   / N_exps, nrow=N, ncol=M)
+PV_SNE  <- matrix(PV_SNE  / N_exps, nrow=N, ncol=M)
+Pow_SE  <- matrix(Pow_SE  / N_exps, nrow=N, ncol=M)
+Pow_SNE <- matrix(Pow_SNE / N_exps, nrow=N, ncol=M)
+```
+
+Сравним мощности и p-value критериев для различных $\mu$ и $\sigma$
+
+```{r}
+par(mfrow=c(1,2))
+par(mar=c(5,5,3,4.5))
+image.plot(matrix(grid$x, nrow=N, ncol=M), matrix(grid$y, nrow=N, ncol=M), PV_SE, 
+           col = colorRampPalette(c("blue", "cyan", "yellow", "red"))(1024), 
+           main="Equal Var - p-values", xlab=expression(mu), ylab=expression(sigma))
+
+image.plot(matrix(grid$x, nrow=N, ncol=M), matrix(grid$y, nrow=N, ncol=M), PV_SNE, 
+           col = colorRampPalette(c("blue", "cyan", "yellow", "red"))(1024), 
+           main="Not Equal Var - p-values", xlab=expression(mu), ylab=expression(sigma))
+```
+
+```{r}
+par(mfrow=c(1,2))
+par(mar=c(5,5,3,4.5))
+image.plot(matrix(grid$x, nrow=N, ncol=M), matrix(grid$y, nrow=N, ncol=M), Pow_SE, 
+           col = colorRampPalette(c("blue", "cyan", "yellow", "red"))(1024),
+           main="Equal Var - power", xlab=expression(mu), ylab=expression(sigma))
+
+image.plot(matrix(grid$x, nrow=N, ncol=M), matrix(grid$y, nrow=N, ncol=M), Pow_SNE, 
+           col = colorRampPalette(c("blue", "cyan", "yellow", "red"))(1024),
+           main="Not Equal Var - power", xlab=expression(mu), ylab=expression(sigma))
+```
+
+Границы схожи и сложно определить, какой критерий ведет себя лучше в той или иной ситуации.
+Построим зависимости разностей p-value и мощностей двух критериев (из значения в версии с равными дисперсиями вычитаем значение в версии с неравными дисперсиями).
+
+```{r}
+par(mfrow=c(1,2))
+par(mar=c(4,5,3,5))
+image.plot(matrix(grid$x, nrow=N, ncol=M), matrix(grid$y, nrow=N, ncol=M), PV_SE - PV_SNE, 
+           col = colorRampPalette(c("blue", "cyan", "yellow", "red"))(1024),
+           main="Average p-value difference", xlab=expression(mu), ylab=expression(sigma))
+
+image.plot(matrix(grid$x, nrow=N, ncol=M), matrix(grid$y, nrow=N, ncol=M), Pow_SE-Pow_SNE, 
+           col = colorRampPalette(c("blue", "cyan", "yellow", "red"))(1024),
+           main="Average power difference", xlab=expression(mu), ylab=expression(sigma))
+```
+
+Из графиков видно, что при больших значениях дисперсии (>1.5) и близких матожиданиях ($\mu$ < 1) мощность критерия для равных дисперсий больше, а среднее p-value меньше, а при маленьких (< 1) это выполнено критерия для неравных дисперсий. При этом в остальных случаях мощности и p-value критерия для равных и неравных дисперсии слабо отличаются.
+
+Оценим корректность критериев. Для этого посмотрим на долю ошибок, в случае, когда нулевая гипотеза верна ($\mu$ = 0), т.е. оценим ошибку первого рода:
+
+```{r}
+N_exps <- 10000
+T1_SE   <- rep(0, M)
+T1_SNE  <- rep(0, M)
+
+for (iter in 1:N_exps) {
+    X1  <- rnorm(n1, mean = 0, sd = 1)
+    X2n <- matrix(rnorm(n2 * length(sigma), 0, sigma), nrow=length(sigma))
+    splitList <- split(X2n, 1:nrow(X2n))
+    
+    TMP   <- unlist(lapply(splitList, function(Y) t.test(X1, Y,var.equal = TRUE)$p.value))
+    T1_SE  <- T1_SE + (TMP <= 0.05)
+    
+    TMP    <- unlist(lapply(splitList, function(Y) t.test(X1, Y,var.equal = FALSE)$p.value))
+    T1_SNE  <- T1_SNE + (TMP <= 0.05)
+}
+T1_SE  <- T1_SE  / N_exps
+T1_SNE <- T1_SNE / N_exps
+
+par(mfrow=c(1,1))
+plot(sigma, T1_SE,   col="red", type="l", xlab=expression(sigma), ylab="Type I error frequency", main="", 
+     ylim=c(min(T1_SE, T1_SNE), max(T1_SE, T1_SNE)))
+lines(sigma, T1_SNE, col="blue")
+legend("topright", c("equal variances", "unequal variances"), lty=c(1,1), col=c("red", "blue")) 
+```
+
+Как видно по графику, ошибка первого критерия Стьюдента в версии неравных дисперсий колеблется около 0.05, т.е. критерий корректен. В версии равных дисперсий ошибка убывает при увеличении дисперсии, примерно равна 0.05 при значении дисперсии, близком к 1 (т.е. когда дисперсии выборок действительно равны). При дальнейшем увеличении дисперсии значения статистики будут чаще принимать меньшие значения и будут реже попадать в область, где нулевая гипотеза отвергается, поэтому ошибка сильно уменьшается. При значениях дисперсии, сильно отклоняющихся от 1, использовать версию критерия Стьюдента для равных дисперсий некорректно.
