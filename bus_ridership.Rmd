@@ -1,0 +1,338 @@
+---
+title: "Задание 4"
+author: "Фокина Дарья"
+output: html_notebook
+---
+ 
+ 
+Данные: [https://datamarket.com/data/set/22w6/portland-oregon-average-monthly-bus-ridership-100-january-1973-through-june-1982-n114#!ds=22w6&display=line]
+
+```{r, echo=FALSE}
+ridership.data <- read.csv("bus_ridership.csv",sep=",")
+print(ridership.data)
+```
+
+
+```{r, echo=FALSE}
+names(ridership.data)[2] <- "Value"
+names(ridership.data)[1] <- "Date"
+```
+
+
+```{r, echo=FALSE}
+library(tseries)
+library(zoo)
+ridership.data$Value <- as.numeric(as.character(ridership.data$Value))
+ridership.data$Date <- as.Date(as.yearmon(ridership.data$Date, format="%Y-%m"))
+print(ridership.data$Date)
+print(ridership.data$Value)
+```
+
+Есть значения NA.
+```{r, echo=FALSE}
+print(nrow(na.omit(ridership.data)))
+print(nrow(ridership.data))
+```
+
+Значение NA всего одно - удалим его.
+
+```{r, echo=FALSE}
+ridership.data <- na.omit(ridership.data)
+```
+
+
+```{r, echo=FALSE}
+label.name = "Average monthly bus ridership"
+tSeries2 <- ts(data = ridership.data$Value, start = as.numeric(c(format(ridership.data$Date[1], "%Y"), format(ridership.data$Date[1], "%m"))), freq = 12)
+plot(tSeries2, type="l", ylab=label.name, col="red")
+grid()
+```
+
+Попробуем поделить на число дней в месяце:
+```{r, echo=FALSE}
+library(Hmisc)
+plot(tSeries2 / monthDays(as.Date(time(tSeries2))), type="l", ylab=label.name, col="red")
+grid()
+```
+
+Ряд стал более регулярным
+```{r, echo=FALSE}
+tSeries <- tSeries2 / monthDays(as.Date(time(tSeries2)))
+```
+
+Обучающая и тестовая выборка:
+```{r}
+trainSeries <- window(tSeries, end=c(1968,06))
+testSeries  <- window(tSeries, start=c(1968,07))
+```
+
+```{r, echo=FALSE}
+D = 12
+```
+
+
+```{r, echo=FALSE}
+plot(stl(tSeries, s.window="periodic"))
+```
+
+```{r, echo=FALSE}
+library(forecast)
+par(mfrow=c(2,1))
+plot(tSeries, ylab="Original series", xlab="", col="red")
+grid()
+Lambda.Opt <- BoxCox.lambda(tSeries)
+plot(BoxCox(tSeries, Lambda.Opt), ylab="Transformed series", xlab="", col="red")
+title(main=toString(round(Lambda.Opt, 3)))
+grid()
+```
+
+## ARIMA
+
+###  Ручной подбор модели
+Ряд нестационарен (KPSS test: p<`r kpss.test(BoxCox(tSeries, Lambda.Opt))$p.value`)
+```{r, echo=FALSE}
+kpss.test(BoxCox(tSeries, Lambda.Opt))$p.value
+```
+
+Сезонное дифференцирование:
+```{r, echo=FALSE}
+plot(diff(BoxCox(tSeries, Lambda.Opt), 12), type="l", col="red")
+grid()
+```
+```{r, echo=FALSE}
+kpss.test(diff(BoxCox(tSeries, Lambda.Opt), 12))$p.value
+```
+KPSS test: p<`r kpss.test(diff(BoxCox(tSeries, Lambda.Opt), 12))$p.value`
+
+Еще раз делаем дифференцирование:
+```{r, echo=FALSE}
+plot(diff(diff(BoxCox(tSeries, Lambda.Opt), 12),1))
+grid()
+```
+
+```{r, echo=FALSE}
+kpss.test(diff(diff(BoxCox(tSeries, Lambda.Opt), 12),1))$p.value
+```
+KPSS test: p > `r kpss.test(diff(diff(BoxCox(tSeries, Lambda.Opt), 12),1))$p.value`. Не отвергаем гипотезу стационарности ряда
+
+
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+acf(diff(diff(BoxCox(tSeries, Lambda.Opt), 12), 1), lag.max=5*12, main="")
+pacf(diff(diff(BoxCox(tSeries, Lambda.Opt), 12), 1), lag.max=5*12, main="")
+```
+
+
+Значимы лаги: на ACF - 1, 12, 13; на PACF - 9, 11, 24.
+Перебор: d = 1, D = 1, max.p=11, max.q=12, max.P=2, max.Q=1, max.order = 12.
+
+```{r, echo=FALSE}
+fit.arima <- auto.arima(tSeries, d=1, D=1, max.p=11, max.q=1, max.P = 2, max.Q = 1, max.order = 11, lambda = Lambda.Opt, stepwise=F)
+fit.arima
+```
+Подобранная модель - ARIMA(2,1,0)(0,1,1)$_{12}$
+Остатки:
+```{r, echo=FALSE}
+res.arima <- residuals(fit.arima)
+plot(res.arima)
+```
+
+Удалим первые 14 отсчетов:
+
+```{r, echo=FALSE}
+res.arima <- res.arima[-c(1:14)]
+tsdisplay(res.arima)
+```
+
+```{r, echo=FALSE}
+p <- rep(0, 1, frequency(tSeries)*3)
+for (i in 1:length(p)){
+  p[i] <- Box.test(res.arima, lag=i, type = "Ljung-Box")$p.value
+}
+plot(p, xlab="Lag", ylab="p-values", ylim=c(0,1), main="Ljung-Box test")
+abline(h = 0.05, lty = 2, col = "blue")
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+qqnorm(res.arima)
+qqline(res.arima, col="red")
+hist(res.arima)
+```
+
+Достигаемые уровни значимости для тестов Шапиро-Уилка для проверки нормальности, Уилкоксона для проверки несмещенности, KPSS для проверки стационарности:
+
+Гипотеза           | Критерий      | Результат проверки | Достигаемый уровень значимости
+------------------ | ------------- | ------------------ | ------------------------------
+Нормальность       | Шапиро-Уилка  | не отвергается     | `r shapiro.test(res.arima)$p.value`
+Несмещённость      | Уилкоксона    | не отвергается     | `r wilcox.test(res.arima)$p.value`
+Стационарность     | KPSS          | не отвергается     | `r kpss.test(res.arima)$p.value`
+
+Значит, остатки нормальны, несмещенные, стационарны.
+
+
+Настроим модель по обучающей выборке и построим ее предсказания:
+```{r, echo=FALSE}
+fitShort <- Arima(trainSeries, order=c(2,1,0), seasonal=c(0,1,1), lambda=Lambda.Opt)
+fc       <- forecast(fitShort, h=D)
+accuracy(fc, testSeries)
+plot(forecast(fitShort, h=D), ylab=label.name, xlab="Time")
+lines(tSeries, col="red")
+```
+
+### Auto 
+```{r, echo=FALSE}
+fit.auto <- auto.arima(tSeries,lambda = Lambda.Opt)
+fit.auto
+```
+
+Подобранная модель - ARIMA(0,1,0)(0,1,2)$_{12}$
+
+```{r, echo=FALSE}
+res.auto <- residuals(fit.auto)
+plot(res.auto)
+```
+ 
+Отрежем первые 14 отсчетов:
+
+```{r, echo=FALSE}
+res.auto <- res.auto[-c(1:14)]
+tsdisplay(res.auto)
+```
+
+Достигаемые значения уровней значимости критерия Льюнга-Бокса:
+```{r, echo=FALSE}
+p <- rep(0, 1, frequency(tSeries)*3)
+for (i in 1:length(p)){
+  p[i] <- Box.test(res.auto, lag=i, type = "Ljung-Box")$p.value
+}
+plot(p, xlab="Lag", ylab="p-values", ylim=c(0,1), main="Ljung-Box test")
+abline(h = 0.1, lty = 2, col = "blue")
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+qqnorm(res.auto)
+qqline(res.auto, col="red")
+hist(res.auto)
+```
+Достигаемые уровни значимости для тестов Шапиро-Уилка для проверки нормальности, Уилкоксона для проверки несмещенности, KPSS для проверки стационарности:
+
+Гипотеза           | Критерий      | Результат проверки | Достигаемый уровень значимости
+------------------ | ------------- | ------------------ | ------------------------------
+Нормальность       | Шапиро-Уилка  | не отвергается     | `r shapiro.test(res.auto)$p.value`
+Несмещённость      | Уилкоксона    | не отвергается     | `r wilcox.test(res.auto)$p.value`
+Стационарность     | KPSS          | не отвергается     | `r kpss.test(res.auto)$p.value`
+
+Значит, остатки нормальны, несмещенные, стационарны.
+
+Настроим модель по обучающей выборке и построим ее предсказания:
+```{r, echo=FALSE}
+fitShort <- Arima(trainSeries, order=c(0,1,0), seasonal=c(0,1,2), lambda=Lambda.Opt)
+fc       <- forecast(fitShort, h=D)
+accuracy(fc, testSeries)
+plot(forecast(fitShort, h=D), ylab=label.name, xlab="Time")
+lines(tSeries, col="red")
+```
+
+
+### Сравнение arima и auto-arima 
+
+```{r, echo=FALSE}
+res      <- residuals(fit.arima, type = "response")[-c(1:14)]
+res.auto <- residuals(fit.auto, type = "response")[-c(1:14)]
+
+plot(res.arima, res.auto, xlim=c(min(c(res.arima,res.auto),na.rm=T), max(c(res.arima, res.auto),na.rm=T)), ylim=c(min(c(res.arima, res.auto),na.rm=T), max(c(res.arima,res.auto),na.rm=T)),
+     xlab = "Residuals of manually found model", ylab="Residuals of auto.arima model")
+grid()
+lines(c(min(c(res.arima, res.auto),na.rm = T), max(c(res.arima, res.auto),na.rm = T)*2), c(min(c(res.arima, res.auto),na.rm = T), max(c(res.arima, res.auto),na.rm = T)*2), col="red")
+
+dm.test(res.arima, res.auto)
+```
+По критерию Диболда-Мариано нет значимого различия качества между пронозами. Но AIC выбранной вручную модели выше и ее ошибка больше, выбираем автоматически выбранную модель
+
+
+## ETS
+
+```{r, echo=FALSE}
+fit.ets <- ets(tSeries,lambda = Lambda.Opt)
+print(fit.ets)
+```
+```{r, echo=FALSE}
+res.ets <- residuals(fit.ets)
+plot(res.ets)
+```
+
+
+```{r, echo=FALSE}
+tsdisplay(res.ets)
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+qqnorm(res.ets)
+qqline(res.ets, col="red")
+hist(res.ets)
+```
+
+Достигаемые значения уровней значимости критерия Льюнга-Бокса:
+
+```{r, echo=FALSE}
+p <- rep(0, 1, frequency(tSeries)*3)
+for (i in 1:length(p)){
+  p[i] <- Box.test(res.ets, lag=i, type = "Ljung-Box")$p.value
+}
+plot(p, xlab="Lag", ylab="p-values", ylim=c(0,1), main="Ljung-Box test")
+abline(h = 0.05, lty = 2, col = "blue")
+```
+
+Достигаемые уровни значимости для тестов Шапиро-Уилка для проверки нормальности, Уилкоксона для проверки несмещенности, KPSS для проверки стационарности:
+
+Гипотеза           | Критерий      | Результат проверки | Достигаемый уровень значимости
+------------------ | ------------- | ------------------ | ------------------------------
+Нормальность       | Шапиро-Уилка  | не отвергается     | `r shapiro.test(res.ets)$p.value`
+Несмещённость      | Уилкоксона    | не отвергается     | `r wilcox.test(res.ets)$p.value`
+Стационарность     | KPSS          | не отвергается     | `r kpss.test(res.ets)$p.value`
+
+Значит, остатки нормальны, несмещенные, стационарны.
+
+Настроим модель по обучающей выборке и построим ее предсказания:
+```{r, echo=FALSE}
+fitShort <- ets(trainSeries, model="AAA", damped=T, lambda=Lambda.Opt)
+fc       <- forecast(fitShort, h=D)
+accuracy(fc, testSeries)
+plot(forecast(fitShort, h=D), ylab=label.name, xlab="Year")
+lines(tSeries, col="red")
+```
+
+## Итоговое сравнение моделей
+
+
+```{r, echo=FALSE}
+res.ets <- res.ets[-c(1:14)]
+```
+
+```{r, echo=FALSE}
+plot(res.auto, res.ets, 
+     xlab="Residuals, ARIMA",
+     ylab="Residuals, ETS",
+     xlim=c(min(c(res.auto, res.ets), na.rm=T), max(c(res.auto, res.ets), na.rm=T)),
+     ylim=c(min(c(res.auto, res.ets), na.rm=T), max(c(res.auto, res.ets), na.rm=T)))
+lines(c(min(c(res.auto, res.ets), na.rm=T), max(c(res.auto, res.ets), na.rm=T)), c(min(c(res.auto, res.ets), na.rm=T), max(c(res.auto, res.ets), na.rm=T)), col="red")
+
+dm.test(res.auto, res.ets)
+dm.test(res.auto, res.ets, alternative = "greater")
+```
+
+Качество модели ETS лучше. Выбираем ее.
+
+## Итоговые предсказания
+
+```{r, echo=FALSE}
+fit.ets <- ets(tSeries,lambda=Lambda.Opt)
+f <- forecast(fit.ets, h=D)
+print(f)
+plot(f, ylab=label.name, xlab="Year", col="red")
+```
+

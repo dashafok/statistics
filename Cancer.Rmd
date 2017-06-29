@@ -1,0 +1,123 @@
+---
+title: "Биомаркеры рака груди"
+author: "Фокина Дарья"
+output: html_notebook
+---
+
+Есть 3 группы людей: здоровые, люди с заболеванием на ранней стадии, люди с сильно выраженными симптомами. Необходимо найти гены со статистически и практически значимыми различиями в уровнях экспрессии для 1й и 2й групп, 1й и 3й групп.
+
+```{r}
+cancer.data <- read.csv("gene_high_throughput_sequencing.csv")
+print(ncol(cancer.data))
+```
+Как видно, дано огромное количество генов.
+
+1. Разделим данные на 3 группы по типу пациентов:
+
+```{r}
+normal <- subset.data.frame(cancer.data, Diagnosis == "normal")
+early.neoplasia <- subset.data.frame(cancer.data, Diagnosis == "early neoplasia")
+cancer <- subset.data.frame(cancer.data, Diagnosis == "cancer")
+```
+
+2. Сравним уровни экспрессии генов в группе здоровых людей и группе людей с ранней стадией рака. Найдем практически значимые отклонения
+
+```{r}
+fold.change <- function(control,treatment){
+    return(abs(ifelse(mean(control) > mean(treatment),mean(control) / mean(treatment),mean(treatment) / mean(control)))>1.5)
+}
+```
+```{r}
+is.practical1 <- mapply(fold.change,normal[3:ncol(normal)],early.neoplasia[3:ncol(early.neoplasia)])
+data1 <- subset.data.frame(cancer.data,subset = ((Diagnosis == "normal") | (Diagnosis == "early neoplasia")), select = append("Diagnosis", names(is.practical1)[is.practical1==TRUE]))
+```
+
+3. Проведем дисперсионный анализ для каждого гена:
+
+```{r}
+p.values.vec1 = list()
+for (i in 2:ncol(data1)){
+  aov.sum1 <- summary(aov(data1[,i] ~ Diagnosis,data = data1))
+  p.values.vec1 <- c(p.values.vec1,aov.sum1[[1]][["Pr(>F)"]][1])
+}
+```
+
+4. Сделаем поправку на множественность:
+
+```{r}
+corrected.pvalues1 <- p.adjust(p.values.vec1,method = "holm")
+```
+
+5. Выберем только те гены, где p.value < 0.05
+
+```{r}
+data.names1 <- colnames(data1)
+list_of_influencing_genes1 <- c()
+for (x in 1:length(corrected.pvalues1)){
+  if(corrected.pvalues1[x] < 0.05){
+    list_of_influencing_genes1 <- c(list_of_influencing_genes1,data.names1[x+1])
+  }
+}
+print(list_of_influencing_genes1)
+```
+
+6. Так как количество генов достаточно большое, приведем визуализацию только для двух из них: KLHDC7A (есть в списке значимых генов) и NOC2L (нет в этом списке)
+
+```{r}
+par(mfrow = c(2,2))
+boxplot(normal$KLHDC7A)
+boxplot(early.neoplasia$KLHDC7A)
+boxplot(normal$NOC2L)
+boxplot(early.neoplasia$NOC2L)
+```
+Как видно, в первом случае действительно есть значимое различие у уровнях экспрессии, а во втором случае - нет.
+
+7. А теперь рассмотрим сравнение уровней экспрессии генов для группы из здоровых людей и группы больных раком. Для начала выделим гены с практически значимыми отклонениями:
+
+```{r}
+is.practical2 <- mapply(fold.change,normal[3:ncol(normal)],cancer[3:ncol(early.neoplasia)])
+data2 <- subset.data.frame(cancer.data,subset = ((Diagnosis == "normal") | (Diagnosis == "cancer")), select = append("Diagnosis", names(is.practical2)[is.practical2==TRUE]))
+```
+
+8. Проведем дисперсионный анализ для каждого гена:
+
+```{r}
+p.values.vec2 = c()
+for (i in 2:ncol(data2)){
+  aov.sum2 <- summary(aov(data2[,i] ~ Diagnosis,data = data2))
+  p.values.vec2 <- c(p.values.vec2,aov.sum2[[1]][["Pr(>F)"]][1])
+}
+```
+
+9. Сделаем поправку на множественность:
+
+```{r}
+corrected.pvalues2 <- p.adjust(p.values.vec2,method = "holm")
+```
+
+10. Выберем только те гены, где p.value < 0.05
+
+```{r}
+data.names2 <- colnames(data2)
+list_of_influencing_genes2 <- c()
+for (x in 1:length(corrected.pvalues2)){
+  if(corrected.pvalues2[x] < 0.05){
+    list_of_influencing_genes2 <- c(list_of_influencing_genes2,data.names2[x+1])
+  }
+}
+print(list_of_influencing_genes2)
+```
+
+6. Так как количество генов слишком большое, приведем визуализацию только для двух из них: GABRD (есть в списке значимых генов) и NOC2L (нет в этом списке)
+
+```{r}
+par(mfrow = c(2,2))
+boxplot(normal$GABRD)
+boxplot(cancer$GABRD)
+boxplot(normal$NOC2L)
+boxplot(cancer$NOC2L)
+```
+
+Как видно, в первом случае действительно есть значимое различие у уровнях экспрессии, а во втором случае - нет.
+
+Отметим, что в случае сравнения с группой с сильно выраженными симтомами получилось больше практически и статистически значимых генов.

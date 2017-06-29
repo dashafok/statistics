@@ -1,0 +1,210 @@
+---
+title: "1.14"
+author: "Фокина Дарья"
+output: html_notebook
+---
+
+Известны наблюдения над различными участками Солнца. Надо построить модель, предсказывающую число вспышек в следующие 24 часа.
+Считываем данные:
+
+```{r}
+solar.flares <- read.csv('solar flares.csv',sep = ';')
+print(solar.flares)
+```
+```{r}
+print(colnames(solar.flares))
+print(ncol(solar.flares))
+```
+
+Всего 9 признаков. Все признаки категориальные. Последние столбцы -  число вспышек различной степени, т.е. отклик.
+
+## 1. Преобразование данных
+Cуммарное число вспышек за 24 часа на каждом участке:
+```{r}
+solar.flares$sum.of.flares.production.by.this.region.24.hours <- rowSums(solar.flares[,c(10,11,12)])
+```
+
+Удалим ненужные столбцы:
+
+```{r}
+solar.flares <- solar.flares[,!(colnames(solar.flares) %in% c("C.class.flares.production.by.this.region.in.the.following.24.hours..common.flares.","M.class.flares.production.by.this.region.in.the.following.24.hours..moderate.flares.","X.class.flares.production.by.this.region.in.the.following.24.hours..severe.flares."))]
+```
+
+Визуализация данных:
+
+```{r}
+par(mfrow=c(2,2))
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ modified.Zurich.class,data=solar.flares)
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ largest.spot.size,data = solar.flares)
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ spot.distribution,data = solar.flares)
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ Activity, data = solar.flares)
+```
+```{r}
+par(mfrow=c(2,2))
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ Evolution,data=solar.flares)
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ Previous.24.hour.flare.activity.code,data=solar.flares)
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ Historically.complex,data = solar.flares)
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ Did.region.become.historically.complex.on.this.pass.across.the.sun.s.disk,data = solar.flares)
+```
+
+```{r}
+boxplot(sum.of.flares.production.by.this.region.24.hours ~ Area,data = solar.flares)
+```
+
+Отклик больше 6 - выброс.
+
+```{r}
+solar.flares <- solar.flares[which(solar.flares$sum.of.flares.production.by.this.region.24.hours < 7),]
+```
+
+
+Видно, что признаки "Activity","Historically.complex", "Did.region.become.historically.complex.on.this.pass.across.the.sun.s.disk", "Area" - бинарные.
+Заменим их на 0 и 1:
+
+```{r}
+tmp <-  solar.flares$Activity
+solar.flares$Activity <- as.integer(I(tmp == "unchanged"))
+tmp <- solar.flares$Historically.complex
+solar.flares$Historically.complex <- as.integer(I(tmp == "yes"))
+tmp <- solar.flares$Did.region.become.historically.complex.on.this.pass.across.the.sun.s.disk
+solar.flares$Did.region.become.historically.complex.on.this.pass.across.the.sun.s.disk <- as.integer(I(tmp == "yes"))
+tmp <- solar.flares$Area
+solar.flares$Area <-as.integer(I(tmp == "big"))
+```
+
+В признаках "Evolution", "Previous.24.hour.flare.activity.code" 3 значения, заменим их на -1,0,1 и 1,2,3 соответственно:
+
+```{r}
+solar.flares$Evolution <- as.numeric(factor(solar.flares$Evolution,levels = c("decay", "no growth", "growth")))-2
+solar.flares$Previous.24.hour.flare.activity.code <- as.numeric(factor(solar.flares$Previous.24.hour.flare.activity.code,levels = c("nothing as big as an M1","one M1","more activity than one M1")))
+```
+
+С помощью dummyVars заменим остальные категориальные признаки на числовые:
+```{r}
+library(caret)
+newvar = dummyVars(~ .,fullRank = TRUE, data = solar.flares)
+solar.flares.modified <-  predict(newvar, newdata = solar.flares)
+detach("package:caret", unload=TRUE)
+```
+
+```{r}
+solar.flares.modified <- data.frame(solar.flares.modified)
+print(solar.flares.modified)
+```
+
+
+## 2. Построение моделей
+Т.к. в нашей задаче отклик является счетным, для построения модели используем пуассоновскую регрессию.
+###Модель 0
+Строим модели по одному фактору:
+
+```{r}
+model0 <- glm(sum.of.flares.production.by.this.region.24.hours~1, family = poisson,data=solar.flares.modified)
+add1(model0, names(solar.flares.modified), test="LRT")
+```
+
+###Модель 1
+```{r}
+library(stats)
+model1 <- glm(sum.of.flares.production.by.this.region.24.hours~.,family = poisson,data = solar.flares.modified)
+print(summary(model1))
+```
+
+###Модель 2
+Один коэффициент не определяется, значит, есть линейная зависимость, удалим "spot.distribution.X":
+```{r}
+model2 <- glm(sum.of.flares.production.by.this.region.24.hours~.-spot.distribution.X,family = poisson, data = solar.flares.modified)
+summary(model2)
+```
+
+Тест на избыточную дисперсию:
+
+```{r}
+library(qcc)
+qcc.overdispersion.test(solar.flares.modified$sum.of.flares.production.by.this.region.24.hours,type="poisson")
+```
+
+p-value < 0.05, значит, есть избыточная дисперсия.
+
+#### Модель 3
+
+Заменим параметр "family" на "negative.binomial":
+
+```{r}
+library(MASS)
+model3 <- glm(sum.of.flares.production.by.this.region.24.hours~.-spot.distribution.X,family = negative.binomial(theta = 1), data = solar.flares.modified)
+summary(model3)
+```
+
+Информационный критерий:
+
+```{r}
+print(summary(model2)$aic)
+print(summary(model3)$aic)
+print(summary(model1)$aic)
+```
+
+
+Парные взаимодействия:
+
+```{r}
+add1(model3,scope = ~ .^2, test="LRT")
+```
+
+
+### Модель 4
+
+Учтем взаимодействие "Historically.complex:Did.region.become.historically.complex.on.this.pass.across.the.sun.s.disk"
+
+```{r}
+model4 <- update(model3,. ~ .+Historically.complex:Did.region.become.historically.complex.on.this.pass.across.the.sun.s.disk)
+print(summary(model3)$aic)
+print(summary(model4)$aic)
+```
+
+
+Последняя модель обладает наименьшим значением. Выбираем ее.
+
+```{r}
+print(summary(model4))
+```
+
+
+## 3. Расстояния Кука
+
+```{r}
+plot(solar.flares$sum.of.flares.production.by.this.region.24.hours, cooks.distance(model4), xlab="Flares", ylab="Cook's distance")
+lines(c(0,100), c(0.015, 0.015), col="red")
+```
+
+
+```{r}
+solar.flares.modified[cooks.distance(model4)>0.015,]
+```
+
+Удалим незначимые наблюдения и посмотрим на коэффициенты:
+
+```{r}
+solar.flares.modified2 <- solar.flares.modified[cooks.distance(model4)<0.15,]
+model5 <- model3 <- glm(sum.of.flares.production.by.this.region.24.hours~.-spot.distribution.X+Historically.complex:Did.region.become.historically.complex.on.this.pass.across.the.sun.s.disk,family = negative.binomial(theta = 1), data = solar.flares.modified2)
+res <- cbind(coefficients(model4), coefficients(model5))
+colnames(res) <- c("All data", "Filtered data")
+res
+```
+
+Коэфффициенты не изменились. Оставим model4
+
+## 4. Интепретация коэффициентов
+
+```{r}
+print(exp(coefficients(model4)))
+```
+
+Увеличение значения любого из признаков на 1 приводит к увеличению на соответствующее значение из приведенной выше таблицы.
+
+## 5. Доверительные интервалы для коэффициентов
+
+```{r}
+exp(confint.default(model4))
+```
+
